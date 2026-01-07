@@ -4,10 +4,6 @@
     {
       "src": "api/**/*.js",
       "use": "@vercel/node"
-    },
-    {
-      "src": "*.html",
-      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -17,16 +13,13 @@
     },
     {
       "src": "/(.*)",
-      "dest": "/index.html"
+      "dest": "/index.html",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      }
     }
   ],
   "env": {
-    "DB_HOST": "@db-host",
-    "DB_USER": "@db-user",
-    "DB_PASSWORD": "@db-password",
-    "DB_NAME": "@db-name",
-    "DB_PORT": "@db-port",
-    "ZHIPU_API_KEY": "@zhipu-api-key",
-    "JWT_SECRET": "@jwt-secret"
+    "NODE_ENV": "production"
   }
 }
