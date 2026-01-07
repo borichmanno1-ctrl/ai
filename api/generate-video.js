@@ -1,268 +1,248 @@
 const mysql = require('mysql2/promise');
-const axios = require('axios');
 
-const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    port: process.env.DB_PORT,
+// 创建数据库连接池
+function createPool() {
+  return mysql.createPool({
+    host: process.env.DB_HOST || 'cd-cdb-5nwy0y82.sql.tencentcdb.com',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || 'lbags0621',
+    database: process.env.DB_NAME || 'ai_video_db',
+    port: process.env.DB_PORT || 21182,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
-});
+  });
+}
 
-// 智谱AI API配置
-const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY;
-const ZHIPU_API_URL = 'https://open.bigmodel.cn/api/paas/v4/vidu';
-
-module.exports = async (req, res) => {
-    // 设置CORS头
-    res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-    );
-
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-
-    if (req.method !== 'POST') {
-        return res.status(405).json({ message: 'Method not allowed' });
-    }
-
-    try {
-        const token = req.headers.authorization?.replace('Bearer ', '');
-        if (!token) {
-            return res.status(401).json({ message: '未授权' });
-        }
-
-        // 验证用户
-        const [users] = await pool.execute(
-            'SELECT id, remaining_seconds, is_premium FROM users WHERE id = ?',
-            [req.userId]
-        );
-
-        if (users.length === 0) {
-            return res.status(401).json({ message: '用户不存在' });
-        }
-
-        const user = users[0];
-        const { prompt, total_seconds, resolution, has_watermark } = req.body;
-
-        if (!prompt || !total_seconds) {
-            return res.status(400).json({ message: '缺少必要参数' });
-        }
-
-        // 检查违规词
-        const [bannedWords] = await pool.execute('SELECT word FROM banned_words');
-        const bannedWordList = bannedWords.map(w => w.word);
-        const hasBannedWords = bannedWordList.some(word => prompt.includes(word));
-        
-        if (hasBannedWords) {
-            await pool.execute(
-                'INSERT INTO system_logs (user_id, action_type, description, ip_address) VALUES (?, ?, ?, ?)',
-                [user.id, 'banned_words_detected', `用户输入包含违规词: ${prompt}`, req.headers['x-forwarded-for'] || req.connection.remoteAddress]
-            );
-            return res.status(400).json({ message: '提示词包含违规内容' });
-        }
-
-        // 计算消耗时长
-        let seconds_used = total_seconds;
-        if (resolution === '1080p') {
-            seconds_used = Math.ceil(total_seconds * 1.5);
-        }
-        
-        // 字数加成
-        if (prompt.length > 100) {
-            seconds_used += Math.floor(prompt.length / 100);
-        }
-
-        // 检查剩余时长
-        if (user.remaining_seconds < seconds_used && !user.is_premium) {
-            return res.status(400).json({ 
-                message: `时长不足！需要${seconds_used}秒，您当前剩余${user.remaining_seconds}秒` 
-            });
-        }
-
-        // 创建视频记录
-        const [result] = await pool.execute(
-            `INSERT INTO video_records 
-            (user_id, prompt, total_seconds, resolution, seconds_used, has_watermark, status) 
-            VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-            [user.id, prompt, total_seconds, resolution, seconds_used, has_watermark ? 1 : 0]
-        );
-
-        const videoId = result.insertId;
-
-        // 分段生成逻辑
-        const segments = [];
-        const segmentDuration = 10; // 每段10秒
-        const segmentCount = Math.ceil(total_seconds / segmentDuration);
-
-        for (let i = 0; i < segmentCount; i++) {
-            const start = i * segmentDuration;
-            const end = Math.min((i + 1) * segmentDuration, total_seconds);
-            const segmentPrompt = generateSegmentPrompt(prompt, i, segmentCount);
-            
-            segments.push({
-                segment: i + 1,
-                start,
-                end,
-                prompt: segmentPrompt,
-                status: 'pending'
-            });
-        }
-
-        // 更新分段信息
-        await pool.execute(
-            'UPDATE video_records SET segments = ? WHERE id = ?',
-            [JSON.stringify(segments), videoId]
-        );
-
-        // 扣除时长（如果不是会员）
-        if (!user.is_premium) {
-            await pool.execute(
-                'UPDATE users SET remaining_seconds = remaining_seconds - ? WHERE id = ?',
-                [seconds_used, user.id]
-            );
-        }
-
-        // 记录日志
-        await pool.execute(
-            'INSERT INTO system_logs (user_id, action_type, description) VALUES (?, ?, ?)',
-            [user.id, 'video_generation_started', `开始生成视频，ID: ${videoId}`]
-        );
-
-        // 异步调用AI生成视频
-        generateVideoSegments(videoId, segments, resolution, has_watermark);
-
-        res.json({
-            success: true,
-            video_id: videoId,
-            segments,
-            seconds_used,
-            message: '视频生成已开始，请稍后查看结果'
-        });
-
-    } catch (error) {
-        console.error('生成视频失败:', error);
-        res.status(500).json({ message: '服务器错误' });
-    }
-};
+// 检查违规词
+async function checkBannedWords(pool, text) {
+  try {
+    const [bannedWords] = await pool.execute('SELECT word FROM banned_words');
+    const bannedWordList = bannedWords.map(w => w.word.toLowerCase());
+    const textLower = text.toLowerCase();
+    
+    return bannedWordList.some(word => textLower.includes(word));
+  } catch (error) {
+    console.error('检查违规词失败:', error);
+    return false;
+  }
+}
 
 // 生成分段提示词
 function generateSegmentPrompt(basePrompt, index, total) {
-    // 这里可以根据分段位置优化提示词
-    const timePhrases = [
-        '开始，',
-        '接着，',
-        '然后，',
-        '随后，',
-        '最后，'
-    ];
-    
-    const phrase = timePhrases[Math.min(index, timePhrases.length - 1)];
-    return `${phrase}${basePrompt}`;
+  const timePhrases = [
+    '开始，',
+    '接着，',
+    '然后，',
+    '随后，',
+    '最后，'
+  ];
+  
+  const phrase = timePhrases[Math.min(index, timePhrases.length - 1)];
+  return `${phrase}${basePrompt}`;
 }
 
-// 异步生成视频分段
-async function generateVideoSegments(videoId, segments, resolution, hasWatermark) {
+module.exports = async (req, res) => {
+  // 设置CORS头
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
+  );
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // 处理POST请求
+  if (req.method === 'POST') {
     try {
-        // 调用智谱AI Vidu API
-        for (let i = 0; i < segments.length; i++) {
-            const segment = segments[i];
-            
-            try {
-                const response = await axios.post(ZHIPU_API_URL, {
-                    model: "vidu",
-                    prompt: segment.prompt,
-                    duration: 10, // 每段10秒
-                    resolution: resolution === '1080p' ? "720p" : "480p", // 智谱API可能支持的分辨率
-                    watermark: hasWatermark
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${ZHIPU_API_KEY}`,
-                        'Content-Type': 'application/json'
-                    }
-                });
+      // 解析请求体
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      const data = JSON.parse(body);
 
-                segment.status = 'completed';
-                segment.video_url = response.data.video_url;
+      const { prompt, total_seconds, resolution, has_watermark, user_id } = data;
 
-                // 更新分段状态
-                const pool = mysql.createPool({
-                    host: process.env.DB_HOST,
-                    user: process.env.DB_USER,
-                    password: process.env.DB_PASSWORD,
-                    database: process.env.DB_NAME,
-                    port: process.env.DB_PORT
-                });
+      if (!prompt || !total_seconds || !user_id) {
+        return res.status(400).json({ 
+          success: false, 
+          message: '缺少必要参数' 
+        });
+      }
 
-                await pool.execute(
-                    'UPDATE video_records SET segments = ? WHERE id = ?',
-                    [JSON.stringify(segments), videoId]
-                );
+      // 创建数据库连接池
+      const pool = createPool();
 
-                pool.end();
+      // 获取用户信息
+      const [users] = await pool.execute(
+        'SELECT id, remaining_seconds, is_premium FROM users WHERE id = ?',
+        [user_id]
+      );
 
-            } catch (error) {
-                console.error(`分段${i+1}生成失败:`, error);
-                segment.status = 'failed';
-                
-                // 如果是第一个分段失败，返还时长
-                if (i === 0) {
-                    const pool = mysql.createPool({
-                        host: process.env.DB_HOST,
-                        user: process.env.DB_USER,
-                        password: process.env.DB_PASSWORD,
-                        database: process.env.DB_NAME,
-                        port: process.env.DB_PORT
-                    });
-                    
-                    await pool.execute(
-                        'UPDATE video_records SET status = "failed", seconds_refunded = seconds_used WHERE id = ?',
-                        [videoId]
-                    );
-                    
-                    await pool.execute(
-                        'UPDATE users SET remaining_seconds = remaining_seconds + ? WHERE id = (SELECT user_id FROM video_records WHERE id = ?)',
-                        [segments.length * 10, videoId]
-                    );
-                    
-                    pool.end();
-                    break;
-                }
-            }
-        }
+      if (users.length === 0) {
+        pool.end();
+        return res.status(404).json({ 
+          success: false, 
+          message: '用户不存在' 
+        });
+      }
 
-        // 所有分段完成后，更新视频状态
-        const allCompleted = segments.every(s => s.status === 'completed');
-        if (allCompleted) {
-            const pool = mysql.createPool({
-                host: process.env.DB_HOST,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: process.env.DB_NAME,
-                port: process.env.DB_PORT
-            });
+      const user = users[0];
 
-            // 这里应该调用视频剪辑API将分段视频合并
-            // 暂时使用模拟的视频URL
-            const finalVideoUrl = `https://example.com/videos/${videoId}.mp4`;
-            
-            await pool.execute(
-                'UPDATE video_records SET status = "completed", video_url = ? WHERE id = ?',
-                [finalVideoUrl, videoId]
-            );
+      // 检查违规词
+      const hasBannedWords = await checkBannedWords(pool, prompt);
+      if (hasBannedWords) {
+        await pool.execute(
+          'INSERT INTO system_logs (user_id, action_type, description) VALUES (?, ?, ?)',
+          [user.id, 'banned_words_detected', '用户输入包含违规词']
+        );
+        pool.end();
+        return res.status(400).json({ 
+          success: false, 
+          message: '提示词包含违规内容' 
+        });
+      }
 
-            pool.end();
-        }
+      // 计算消耗时长
+      let seconds_used = parseInt(total_seconds);
+      if (resolution === '1080p') {
+        seconds_used = Math.ceil(total_seconds * 1.5);
+      }
+      
+      // 字数加成
+      if (prompt.length > 100) {
+        seconds_used += Math.floor(prompt.length / 100);
+      }
+
+      // 检查剩余时长
+      if (user.remaining_seconds < seconds_used && !user.is_premium) {
+        pool.end();
+        return res.status(400).json({ 
+          success: false,
+          message: `时长不足！需要${seconds_used}秒，您当前剩余${user.remaining_seconds}秒` 
+        });
+      }
+
+      // 创建视频记录
+      const segments = [];
+      const segmentDuration = 10;
+      const segmentCount = Math.ceil(total_seconds / segmentDuration);
+
+      for (let i = 0; i < segmentCount; i++) {
+        const start = i * segmentDuration;
+        const end = Math.min((i + 1) * segmentDuration, total_seconds);
+        const segmentPrompt = generateSegmentPrompt(prompt, i, segmentCount);
+        
+        segments.push({
+          segment: i + 1,
+          start,
+          end,
+          prompt: segmentPrompt,
+          status: 'pending'
+        });
+      }
+
+      const [result] = await pool.execute(
+        `INSERT INTO video_records 
+        (user_id, prompt, segments, total_seconds, resolution, seconds_used, has_watermark, status) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        [
+          user.id, 
+          prompt, 
+          JSON.stringify(segments), 
+          total_seconds, 
+          resolution || '720p', 
+          seconds_used, 
+          has_watermark ? 1 : 0
+        ]
+      );
+
+      const videoId = result.insertId;
+
+      // 扣除时长（如果不是会员）
+      if (!user.is_premium) {
+        await pool.execute(
+          'UPDATE users SET remaining_seconds = remaining_seconds - ? WHERE id = ?',
+          [seconds_used, user.id]
+        );
+      }
+
+      // 记录日志
+      await pool.execute(
+        'INSERT INTO system_logs (user_id, action_type, description) VALUES (?, ?, ?)',
+        [user.id, 'video_generation_started', `开始生成视频，ID: ${videoId}`]
+      );
+
+      pool.end();
+
+      // 返回成功响应
+      res.status(200).json({
+        success: true,
+        video_id: videoId,
+        segments,
+        seconds_used,
+        remaining_seconds: user.is_premium ? user.remaining_seconds : user.remaining_seconds - seconds_used,
+        message: '视频生成任务已创建'
+      });
 
     } catch (error) {
-        console.error('视频生成过程失败:', error);
+      console.error('生成视频失败:', error);
+      res.status(500).json({ 
+        success: false,
+        message: '服务器错误',
+        error: error.message 
+      });
     }
-}
+  } else if (req.method === 'GET') {
+    // 获取视频生成状态
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const videoId = url.searchParams.get('video_id');
+      
+      if (!videoId) {
+        return res.status(400).json({ 
+          success: false,
+          message: '缺少video_id参数' 
+        });
+      }
+
+      const pool = createPool();
+      const [videos] = await pool.execute(
+        'SELECT * FROM video_records WHERE id = ?',
+        [videoId]
+      );
+
+      pool.end();
+
+      if (videos.length === 0) {
+        return res.status(404).json({ 
+          success: false,
+          message: '视频记录不存在' 
+        });
+      }
+
+      const video = videos[0];
+      res.status(200).json({
+        success: true,
+        video
+      });
+
+    } catch (error) {
+      console.error('获取视频状态失败:', error);
+      res.status(500).json({ 
+        success: false,
+        message: '服务器错误' 
+      });
+    }
+  } else {
+    res.status(405).json({ 
+      success: false,
+      message: 'Method not allowed' 
+    });
+  }
+};
