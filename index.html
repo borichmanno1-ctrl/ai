@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI视频生成器 - 文字转视频</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="container">
+            <div class="logo">
+                <i class="fas fa-video"></i>
+                <span>AI视频生成器</span>
+            </div>
+            <div class="nav-links" id="navLinks">
+                <a href="#home">首页</a>
+                <a href="#generate">生成视频</a>
+                <a href="#pricing">套餐</a>
+                <a href="#about">关于</a>
+            </div>
+            <div class="user-info" id="userInfo">
+                <span id="remainingTime">剩余时长: <strong>0秒</strong></span>
+                <button id="loginBtn" class="btn btn-outline">登录/注册</button>
+                <div id="userMenu" style="display: none;">
+                    <span id="userName"></span>
+                    <button id="logoutBtn" class="btn btn-outline">退出</button>
+                </div>
+            </div>
+            <button class="mobile-menu-btn" onclick="toggleMobileMenu()">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="container">
+        <!-- 登录/注册弹窗 -->
+        <div id="authModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeAuthModal()">&times;</span>
+                <div class="auth-tabs">
+                    <button class="tab-btn active" onclick="switchTab('login')">登录</button>
+                    <button class="tab-btn" onclick="switchTab('register')">注册</button>
+                </div>
+                
+                <div id="loginForm" class="auth-form active">
+                    <h3>登录账号</h3>
+                    <div class="form-group">
+                        <label>邮箱</label>
+                        <input type="email" id="loginEmail" placeholder="请输入邮箱">
+                    </div>
+                    <div class="form-group">
+                        <label>密码</label>
+                        <input type="password" id="loginPassword" placeholder="请输入密码">
+                    </div>
+                    <button class="btn btn-primary" onclick="login()">登录</button>
+                </div>
+                
+                <div id="registerForm" class="auth-form">
+                    <h3>注册账号</h3>
+                    <div class="form-group">
+                        <label>用户名</label>
+                        <input type="text" id="registerUsername" placeholder="请输入用户名">
+                    </div>
+                    <div class="form-group">
+                        <label>邮箱</label>
+                        <input type="email" id="registerEmail" placeholder="请输入邮箱">
+                    </div>
+                    <div class="form-group">
+                        <label>密码</label>
+                        <input type="password" id="registerPassword" placeholder="至少6位密码">
+                    </div>
+                    <div class="form-group">
+                        <label>确认密码</label>
+                        <input type="password" id="registerConfirmPassword" placeholder="再次输入密码">
+                    </div>
+                    <button class="btn btn-primary" onclick="register()">注册</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 首页 -->
+        <section id="home" class="hero">
+            <div class="hero-content">
+                <h1>文字变视频，创意无限</h1>
+                <p class="subtitle">使用AI技术，将您的文字描述转换为高质量视频</p>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <i class="fas fa-users"></i>
+                        <span>已服务 <strong id="userCount">1000+</strong> 用户</span>
+                    </div>
+                    <div class="stat">
+                        <i class="fas fa-video"></i>
+                        <span>生成 <strong id="videoCount">5000+</strong> 个视频</span>
+                    </div>
+                    <div class="stat">
+                        <i class="fas fa-clock"></i>
+                        <span>累计 <strong id="totalTime">100000+</strong> 秒内容</span>
+                    </div>
+                </div>
+                <button class="btn btn-primary btn-lg" onclick="scrollToGenerate()">
+                    立即体验 <i class="fas fa-arrow-right"></i>
+                </button>
+            </div>
+            <div class="hero-image">
+                <div class="video-preview">
+                    <i class="fas fa-play-circle"></i>
+                </div>
+            </div>
+        </section>
+
+        <!-- 视频生成区 -->
+        <section id="generate" class="generate-section">
+            <h2>生成AI视频</h2>
+            <p class="section-description">描述您想要的视频内容，AI将为您生成</p>
+            
+            <div class="generate-container">
+                <div class="prompt-input">
+                    <div class="input-header">
+                        <h3><i class="fas fa-keyboard"></i> 输入视频描述</h3>
+                        <div class="time-info">
+                            <span>消耗时长: <span id="costTime">0秒</span></span>
+                            <span>剩余时长: <span id="currentTime">0秒</span></span>
+                        </div>
+                    </div>
+                    <textarea 
+                        id="videoPrompt" 
+                        placeholder="例如：一只可爱的小猫在草地上玩耍，阳光明媚，背景有蝴蝶飞舞..."
+                        rows="6"
+                        oninput="updateCostTime()"
+                    ></textarea>
+                    <div class="prompt-tools">
+                        <div class="word-count">
+                            字数: <span id="wordCount">0</span>
+                        </div>
+                        <div class="example-prompts">
+                            <span class="example-tag" onclick="useExample('城市夜景，霓虹灯光，未来科技感，赛博朋克风格')">城市夜景</span>
+                            <span class="example-tag" onclick="useExample('山水风景，瀑布流水，日出云海，无人机视角')">山水风景</span>
+                            <span class="example-tag" onclick="useExample('动漫风格，魔法少女，星空背景，奇幻冒险')">动漫风格</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="generate-controls">
+                    <div class="control-group">
+                        <label>视频长度</label>
+                        <select id="videoLength" onchange="updateCostTime()">
+                            <option value="10">10秒</option>
+                            <option value="20">20秒</option>
+                            <option value="30">30秒</option>
+                            <option value="60">60秒</option>
+                        </select>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>视频分辨率</label>
+                        <div class="resolution-selector">
+                            <label class="resolution-option">
+                                <input type="radio" name="resolution" value="720p" checked onchange="updateCostTime()">
+                                <span>720P (1倍时长)</span>
+                            </label>
+                            <label class="resolution-option">
+                                <input type="radio" name="resolution" value="1080p" onchange="updateCostTime()">
+                                <span>1080P (1.5倍时长)</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>水印设置</label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="addWatermark" checked>
+                            <span>添加"AI生成"水印</span>
+                        </label>
+                    </div>
+                    
+                    <button id="generateBtn" class="btn btn-primary btn-generate" onclick="generateVideo()">
+                        <i class="fas fa-magic"></i> 生成视频
+                    </button>
+                    
+                    <div class="cost-notice">
+                        <i class="fas fa-info-circle"></i>
+                        <span>本次将消耗 <strong id="finalCost">0</strong> 秒时长</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 生成进度 -->
+            <div id="progressSection" class="progress-section" style="display: none;">
+                <h3><i class="fas fa-spinner fa-spin"></i> 正在生成视频...</h3>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div id="progressText" class="progress-text">初始化中...</div>
+                <div id="segmentProgress" class="segment-progress"></div>
+            </div>
+            
+            <!-- 生成结果 -->
+            <div id="resultSection" class="result-section" style="display: none;">
+                <h3><i class="fas fa-check-circle"></i> 视频生成完成！</h3>
+                <div class="video-result">
+                    <div id="videoPlayer" class="video-player">
+                        <!-- 视频播放器将通过JS动态插入 -->
+                    </div>
+                    <div class="video-actions">
+                        <button class="btn btn-success" onclick="downloadVideo()">
+                            <i class="fas fa-download"></i> 下载视频
+                        </button>
+                        <button class="btn btn-outline" onclick="generateAgain()">
+                            <i class="fas fa-redo"></i> 再次生成
+                        </button>
+                        <button class="btn btn-outline" onclick="shareVideo()">
+                            <i class="fas fa-share-alt"></i> 分享
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 获取时长区 -->
+        <section class="earn-section">
+            <h2>获取更多生成时长</h2>
+            <div class="earn-options">
+                <div class="earn-card">
+                    <div class="earn-icon">
+                        <i class="fas fa-ad"></i>
+                    </div>
+                    <h3>观看广告</h3>
+                    <p>观看15秒广告可获得 <strong>25秒</strong> 生成时长</p>
+                    <div class="earn-stats">
+                        今日剩余: <span id="adsLeft">5</span>次
+                    </div>
+                    <button class="btn btn-primary" onclick="watchAd()">
+                        观看广告获取时长
+                    </button>
+                </div>
+                
+                <div class="earn-card">
+                    <div class="earn-icon">
+                        <i class="fas fa-gift"></i>
+                    </div>
+                    <h3>邀请好友</h3>
+                    <p>邀请好友注册，双方各得 <strong>60秒</strong> 时长</p>
+                    <div class="invite-link">
+                        <input type="text" id="inviteLink" readonly>
+                        <button class="btn btn-outline" onclick="copyInviteLink()">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="earn-card premium">
+                    <div class="earn-icon">
+                        <i class="fas fa-crown"></i>
+                    </div>
+                    <h3>开通会员</h3>
+                    <p>无限生成 + 去水印 + 优先处理</p>
+                    <div class="price">¥59<span>/月</span></div>
+                    <button class="btn btn-premium" onclick="showPricing()">
+                        立即开通
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 套餐价格区 -->
+        <section id="pricing" class="pricing-section">
+            <h2>选择适合您的套餐</h2>
+            <div class="pricing-cards">
+                <div class="pricing-card">
+                    <div class="pricing-header">
+                        <h3>体验包</h3>
+                        <div class="price">¥5</div>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fas fa-check"></i> 300秒生成时长</li>
+                        <li><i class="fas fa-check"></i> 720P分辨率</li>
+                        <li><i class="fas fa-times"></i> 无水印版</li>
+                        <li><i class="fas fa-times"></i> 优先处理</li>
+                    </ul>
+                    <button class="btn btn-outline" onclick="recharge('basic')">
+                        立即购买
+                    </button>
+                </div>
+                
+                <div class="pricing-card popular">
+                    <div class="popular-badge">最受欢迎</div>
+                    <div class="pricing-header">
+                        <h3>专业包</h3>
+                        <div class="price">¥39<span>/月</span></div>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fas fa-check"></i> 2000秒生成时长</li>
+                        <li><i class="fas fa-check"></i> 1080P分辨率</li>
+                        <li><i class="fas fa-check"></i> 无水印版</li>
+                        <li><i class="fas fa-times"></i> 优先处理</li>
+                    </ul>
+                    <button class="btn btn-primary" onclick="recharge('professional')">
+                        立即购买
+                    </button>
+                </div>
+                
+                <div class="pricing-card premium">
+                    <div class="pricing-header">
+                        <h3>无限包</h3>
+                        <div class="price">¥99<span>/月</span></div>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fas fa-check"></i> 无限生成时长</li>
+                        <li><i class="fas fa-check"></i> 1080P分辨率</li>
+                        <li><i class="fas fa-check"></i> 无水印版</li>
+                        <li><i class="fas fa-check"></i> 优先处理</li>
+                    </ul>
+                    <button class="btn btn-premium" onclick="recharge('unlimited')">
+                        立即开通
+                    </button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- 广告弹窗 -->
+    <div id="adModal" class="modal">
+        <div class="modal-content ad-modal">
+            <h3>观看广告获取时长</h3>
+            <div class="ad-container">
+                <div class="ad-player" id="adPlayer">
+                    <div class="ad-countdown">
+                        广告将在 <span id="adCountdown">15</span> 秒后结束
+                    </div>
+                    <!-- 广告内容将通过JS动态加载 -->
+                    <div class="ad-placeholder">
+                        <i class="fas fa-ad"></i>
+                        <p>广告内容加载中...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="ad-reward">
+                <i class="fas fa-gift"></i>
+                观看完成可获得 <strong>25秒</strong> 生成时长
+            </div>
+            <button id="closeAdBtn" class="btn btn-outline" onclick="closeAdModal()" disabled>
+                请等待广告结束
+            </button>
+        </div>
+    </div>
+
+    <!-- 支付弹窗 -->
+    <div id="paymentModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closePaymentModal()">&times;</span>
+            <h3>确认支付</h3>
+            <div id="paymentDetails">
+                <!-- 支付详情将通过JS动态生成 -->
+            </div>
+            <div class="payment-methods">
+                <h4>选择支付方式</h4>
+                <div class="method-options">
+                    <label class="method-option">
+                        <input type="radio" name="paymentMethod" value="alipay" checked>
+                        <i class="fab fa-alipay"></i>
+                        <span>支付宝</span>
+                    </label>
+                    <label class="method-option">
+                        <input type="radio" name="paymentMethod" value="wechat">
+                        <i class="fab fa-weixin"></i>
+                        <span>微信支付</span>
+                    </label>
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="processPayment()">
+                确认支付
+            </button>
+        </div>
+    </div>
+
+    <!-- 提现功能 -->
+    <div id="withdrawModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeWithdrawModal()">&times;</span>
+            <h3>申请提现</h3>
+            <div class="form-group">
+                <label>提现金额</label>
+                <input type="number" id="withdrawAmount" min="10" max="10000" placeholder="最低10元">
+                <div class="form-hint">可提现金额: ¥<span id="availableBalance">0.00</span></div>
+            </div>
+            <div class="form-group">
+                <label>手续费</label>
+                <div class="fee-display">
+                    <span id="withdrawFee">0.00</span> 元 (2%)
+                </div>
+            </div>
+            <div class="form-group">
+                <label>实际到账</label>
+                <div class="amount-display">
+                    ¥<span id="actualAmount">0.00</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>收款方式</label>
+                <select id="withdrawMethod">
+                    <option value="alipay">支付宝</option>
+                    <option value="wechat">微信支付</option>
+                    <option value="bank">银行卡</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>收款账号</label>
+                <input type="text" id="withdrawAccount" placeholder="请输入收款账号">
+            </div>
+            <button class="btn btn-primary" onclick="submitWithdraw()">
+                提交提现申请
+            </button>
+        </div>
+    </div>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>AI视频生成器</h4>
+                    <p>让每个人都能轻松创作视频</p>
+                    <div class="social-links">
+                        <a href="#"><i class="fab fa-weixin"></i></a>
+                        <a href="#"><i class="fab fa-qq"></i></a>
+                        <a href="#"><i class="fab fa-weibo"></i></a>
+                    </div>
+                </div>
+                <div class="footer-section">
+                    <h4>快速链接</h4>
+                    <a href="#home">首页</a>
+                    <a href="#generate">生成视频</a>
+                    <a href="#pricing">套餐价格</a>
+                    <a href="#" onclick="showWithdrawModal()">提现</a>
+                </div>
+                <div class="footer-section">
+                    <h4>支持</h4>
+                    <a href="#">帮助中心</a>
+                    <a href="#">常见问题</a>
+                    <a href="#">联系我们</a>
+                </div>
+                <div class="footer-section">
+                    <h4>法律</h4>
+                    <a href="#">用户协议</a>
+                    <a href="#">隐私政策</a>
+                    <a href="#">免责声明</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 AI视频生成器. 保留所有权利.</p>
+                <p>本平台生成内容已添加AI水印，请遵守相关法律法规</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
